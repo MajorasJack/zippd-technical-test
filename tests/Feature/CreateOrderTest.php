@@ -74,6 +74,32 @@ it('returns 422 for an invalid body and saves nothing', function (): void {
     expect(Order::count())->toBe(0);
 });
 
+it('returns 422 for more than 50 parcels and saves nothing', function (): void {
+    Sanctum::actingAs(Partner::factory()->create());
+    $parcels = array_map(
+        fn (): array => ['weight_grams' => fake()->numberBetween(1, 50_000)],
+        range(1, 51),
+    );
+
+    $this->postJson(route('orders.store'), [...validOrderPayload(), 'parcels' => $parcels])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('parcels');
+
+    expect(Order::count())->toBe(0);
+});
+
+it('returns 422 for an address line longer than 255 characters and saves nothing', function (): void {
+    Sanctum::actingAs(Partner::factory()->create());
+    $payload = validOrderPayload();
+    $payload['collection_address']['line_1'] = fake()->regexify('[A-Za-z0-9]{256}');
+
+    $this->postJson(route('orders.store'), $payload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('collection_address.line_1');
+
+    expect(Order::count())->toBe(0);
+});
+
 it('returns the existing order with a 200 when the same partner reference is sent twice', function (): void {
     Sanctum::actingAs(Partner::factory()->create());
     $payload = validOrderPayload();

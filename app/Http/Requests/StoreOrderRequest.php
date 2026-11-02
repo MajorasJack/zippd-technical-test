@@ -18,7 +18,7 @@ class StoreOrderRequest extends FormRequest
             'idempotency_key' => ['nullable', 'string', 'max:255'],
             ...$this->addressRules('collection_address'),
             ...$this->addressRules('delivery_address'),
-            'parcels' => ['required', 'array', 'min:1'],
+            'parcels' => ['required', 'array', 'min:1', 'max:50'],
             'parcels.*.weight_grams' => ['required', 'integer', 'between:1,50000'],
         ];
     }
@@ -46,10 +46,10 @@ class StoreOrderRequest extends FormRequest
     {
         return [
             $field => ['required', 'array:line_1,line_2,city,postcode,country_code'],
-            sprintf('%s.line_1', $field) => ['required', 'string'],
-            sprintf('%s.line_2', $field) => ['nullable', 'string'],
-            sprintf('%s.city', $field) => ['required', 'string'],
-            sprintf('%s.postcode', $field) => ['required', 'string'],
+            sprintf('%s.line_1', $field) => ['required', 'string', 'max:255'],
+            sprintf('%s.line_2', $field) => ['nullable', 'string', 'max:255'],
+            sprintf('%s.city', $field) => ['required', 'string', 'max:255'],
+            sprintf('%s.postcode', $field) => ['required', 'string', 'max:255'],
             sprintf('%s.country_code', $field) => ['required', 'string', 'size:2', 'alpha:ascii'],
         ];
     }
