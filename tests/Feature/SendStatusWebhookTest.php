@@ -69,7 +69,7 @@ it('sends nothing more once a retry has delivered the change', function (): void
     Http::assertSentCount(2);
 });
 
-it('sets webhook_failed_at on the status change when it fails for good', function (): void {
+it('sets webhook_failed_at on the status change when it fails after all retries', function (): void {
     $statusChange = OrderStatusChange::factory()->create();
 
     (new SendStatusWebhook($statusChange))->failed();

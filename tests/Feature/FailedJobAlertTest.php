@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Mockery\MockInterface;
 
-it('writes a critical alert when a job fails for good', function (): void {
+it('writes a critical alert when a job fails permanently', function (): void {
     $order = Order::factory()->create();
 
     $message = fake()->sentence();
@@ -20,7 +20,7 @@ it('writes a critical alert when a job fails for good', function (): void {
     Log::shouldReceive('channel')->once()->with('alerts')->andReturnSelf();
 
     Log::shouldReceive('critical')->once()->with(
-        sprintf('Job %s failed for good', GeocodeAddress::class),
+        sprintf('Job %s failed permanently', GeocodeAddress::class),
         Mockery::on(
             fn (array $context): bool => Str::isUuid($context['job_uuid']) && $context['exception'] === $message,
         ),

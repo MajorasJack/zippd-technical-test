@@ -57,7 +57,7 @@ it('throws when the geocoder fails so the queue retries it', function (): void {
         ->toThrow(GeocodingFailed::class);
 });
 
-it('sets geocode_failed_at on the order when it fails for good', function (): void {
+it('sets geocode_failed_at on the order when it fails after all retries', function (): void {
     $order = Order::factory()->create();
 
     (new GeocodeAddress($order, fake()->randomElement(AddressType::cases())))->failed();
