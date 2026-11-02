@@ -31,6 +31,7 @@ services:
                 WWWGROUP: '${WWWGROUP}'
         image: 'sail-8.5/app'
         command: 'php artisan queue:listen'
+        restart: unless-stopped
         environment:
             WWWUSER: '${WWWUSER}'
             LARAVEL_SAIL: 1
