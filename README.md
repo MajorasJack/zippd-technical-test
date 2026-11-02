@@ -81,7 +81,7 @@ curl -X POST http://localhost:8080/api/orders \
 | `409` | The reference matches one order and the key matches a different one, so we can't tell which the partner means. |
 | `422` | The body is invalid. The response lists the errors. |
 
-The `Idempotency-Key` header is optional. Each address has `line_1`, `city`, `postcode` and a 2-letter `country_code`, plus an optional `line_2`. Each parcel needs a `weight_grams` between 1 and 50,000.
+The `Idempotency-Key` header is optional. Each address has `line_1`, `city`, `postcode` and a 2-letter `country_code`, plus an optional `line_2`. Each address line is at most 255 characters. An order has between 1 and 50 parcels, and each parcel needs a `weight_grams` between 1 and 50,000.
 
 ### Change an order's status
 
@@ -127,7 +127,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 **One Sanctum token per partner.** Orders belong to the partner that sent them, partner references are unique per partner rather than across everyone, and a partner can only change its own orders. Another partner's order answers `404` rather than `403`, so no one can tell which order IDs exist.
 
-**The database is the idempotency guarantee.** Unique indexes on `(partner_id, partner_reference)` and `(partner_id, idempotency_key)` make a duplicate order impossible, whatever the application code does. The lookup before the insert gives a duplicate a clean `200`. If two identical requests both get past the lookup at the same moment, the second insert hits the unique index, and we catch that and return the first request's order. A duplicate gets the existing order back, not an error: a partner retrying after a timeout needs the order ID, and refusing would turn a safe retry into a failure. The partner reference identifies the order and the key identifies the request, so either one matching counts.
+**The database is the idempotency guarantee.** Unique indexes on `(partner_id, partner_reference)` and `(partner_id, idempotency_key)` make a duplicate order impossible, whatever the application code does. The lookup before the insert gives a duplicate a clean `200`. If two identical requests both get past the lookup at the same moment, the second insert hits the unique index, and we catch that and return the first request's order. A duplicate gets the existing order back, not an error: a partner retrying after a timeout needs the order ID, and refusing would turn a safe retry into a failure. The partner reference identifies the order and the key identifies the request, so either one matching counts. The lookup is two exact queries, one per unique index, rather than one query with an `OR`. MySQL can't use both composite indexes through an `OR`, so it falls back to the shared `partner_id` prefix and reads every order the partner has ever sent, on every request.
 
 **One transaction, and jobs queued after it commits.** The order, its parcels and the initial `received` status are written together, so a failure saves nothing. The geocoding jobs are dispatched with `afterCommit()`, so a rolled-back order never has jobs queued for it, and the request does nothing slow.
 
@@ -151,6 +151,8 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 - **Addresses** are an object with `line_1`, optional `line_2`, `city`, `postcode` and a 2-letter `country_code`. The brief doesn't define one. Unknown keys are refused, because the address is stored as-is.
 - **Weights** are whole grams. Integers add up exactly, so there are no floating-point surprises.
+- **Up to 50 parcels per order**, and address lines up to 255 characters, so one request can't hold a long transaction open on the database.
+- **`geocode_failed_at` covers both addresses.** The address still without a latitude is the one that failed.
 - **One webhook URL and secret** are shared by every partner, as the brief asks for a URL set in config.
 - **No webhook for the initial `received` status.** The partner already knows it sent the order. "Every status change" is read as every change made through the PATCH endpoint.
 - **Webhooks for one order can arrive out of order.** Each change has its own job, so after retries a partner can receive `delivered` before `out-for-delivery`. The partner's own systems may reorder updates too. Partners should order updates by `changed_at`.
@@ -158,7 +160,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 ## Testing
 
-`./vendor/bin/sail test` runs 36 tests against MySQL. They cover the brief's four required areas:
+`./vendor/bin/sail test` runs 38 tests against MySQL. Alongside the input validation and its limits, they cover the brief's four required areas:
 
 - **Idempotency:** a repeated reference, a repeated key, two requests racing past the lookup, the same reference from two partners, and the `409`.
 - **Rollback:** a parcel that fails to save leaves no order, parcel, status change or queued job.
@@ -173,16 +175,23 @@ Nothing planned is missing. The items below are deliberate omissions, and "With 
 
 ## With more time
 
-- **Reject a reused reference or key with a different body** with a `409`. Today a duplicate returns the original order whatever the body says.
+These are roughly in the order they'd matter under load, at around 100k orders a day.
+
+- **Move the queue off MySQL, to Redis.** The `database` driver polls, inserts and deletes about four jobs per order on the same primary that takes the API's writes. It's the first thing to strain as volume grows.
+- **Separate queues** for geocoding and webhooks. While a partner's endpoint is down, each webhook attempt can hold a worker for up to 5 seconds, five times over, which starves geocoding on a shared queue.
+- **Throttle Sanctum's `last_used_at` writes.** Sanctum updates the token's row on every request, which is a hot single-row write per partner.
+- **Retry a deadlock on duplicate inserts.** With three or more identical requests at once, InnoDB can report a deadlock instead of a duplicate key, and that request gets a `500` until the partner retries. Catching the deadlock and re-running the lookup would handle it like a duplicate.
+- **Data retention.** `order_status_changes` grows by about three rows per order, and nothing prunes `failed_jobs`. Both need archiving or pruning.
+- **Reject a reused reference or key with a different body** with a `409`. Today a duplicate returns the original order whatever the body says. The only `409` is a reference and key that point at two different orders.
 - **Per-partner webhook URLs and secrets,** stored on the partner, with the secret encrypted.
 - **Honour `Retry-After`** from the geocoding service and from partners, instead of always using the fixed backoff. Releasing a job for that long counts as an attempt, so the tries would need adjusting.
 - **Stop retrying a `4xx`** that can never succeed, such as a `400` or `410`, and fail the job straight away.
 - **A time limit on signatures** (a signed timestamp), so a captured webhook can't be replayed later.
-- **A sweeper** that finds status changes whose webhook was never queued or delivered, for example after a worker crash, and queues them again.
+- **A sweeper** that finds status changes whose webhook was never queued or delivered, for example after a worker crash, and queues them again. It would need an index covering `webhook_delivered_at`, `webhook_failed_at` and `created_at`.
+- **Deduplicate alerts,** so an hour-long partner outage raises one alert rather than thousands. Check too that a real geocoder's exceptions don't carry the address, for example in a request URL.
 - **A cache in front of the idempotency lookup** at high volume, keeping keys for about 24 hours, with the unique indexes staying as the real guarantee.
-- **Separate queues** for geocoding and webhooks, so a slow geocoder can't hold up partner updates.
 - **Rate limiting** per partner.
-- **Redis** for the queue, and MySQL tuned for production.
+- **Leave `PARTNER_WEBHOOK_SECRET` blank in `.env.example`,** so a production install can't inherit the development value.
 
 ## What we'd monitor and alert on in production
 
@@ -190,5 +199,6 @@ Nothing planned is missing. The items below are deliberate omissions, and "With 
 - **`failed_jobs` growth**, and the number of orders with `geocode_failed_at` set.
 - **Undelivered webhooks:** status changes with `webhook_failed_at` set, or with neither timestamp set after a few minutes, which would point to stuck workers or a missing job.
 - **Queue depth and wait time**, so slow workers are spotted before partners notice.
+- **Slow queries and rows examined** on the `orders` lookups, so a query that stops using its index shows up before it hurts the primary.
 - **Partner webhook response times and error rates**, per partner.
 - **API error rates and latency:** `401`s (bad tokens), `409`s (partners reusing keys incorrectly) and `5xx`s.
