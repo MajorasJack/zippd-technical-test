@@ -11,13 +11,13 @@ Built with Laravel 13, MySQL 8.4 and Pest, running in Laravel Sail.
 
 ## How to run it
 
-You need Docker running. PHP 8.4+ and Composer on your machine make the first step easier, but they're optional.
+You need Docker running. PHP 8.3+ and Composer on your machine make the first step easier, but they're optional.
 
 ```bash
 git clone <this repository> order-ingest && cd order-ingest
 cp .env.example .env
 composer install
-./vendor/bin/sail up -d
+./vendor/bin/sail up -d --wait
 ./vendor/bin/sail artisan key:generate
 ./vendor/bin/sail artisan migrate
 ```
@@ -27,6 +27,8 @@ Without PHP on your machine, install the dependencies with Sail's Composer image
 ```bash
 docker run --rm -u "$(id -u):$(id -g)" -v "$(pwd):/var/www/html" -w /var/www/html laravelsail/php84-composer:latest composer install --ignore-platform-reqs
 ```
+
+`--wait` returns once MySQL's health check passes. On the first start MySQL takes a few seconds to initialise, and `migrate` fails if it runs before then.
 
 The app is on `http://localhost:8080`, and MySQL is forwarded to port `3307`. Change `APP_PORT` and `FORWARD_DB_PORT` in `.env` if those ports are taken.
 
@@ -141,7 +143,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 **Signed webhooks.** `X-Signature` lets a partner check a webhook came from us. The body is encoded once and those exact bytes are both signed and sent, so the signature always matches what arrives.
 
-**One place for alerts.** A single `Queue::failing()` listener writes every job that fails for good to the `alerts` log channel (`storage/logs/alerts.log`). Each job's `failed()` also marks its own record (`geocode_failed_at`, `webhook_failed_at`), so you can see the failure on the order itself. The alerts channel stands in for a real alerting service: in production it would ship to Logstash, Datadog or similar, where the alert rules live. Alert messages carry the job and its ID, never customer addresses.
+**One place for alerts.** A single `Queue::failing()` listener writes every job that fails for good to the `alerts` log channel (`storage/logs/alerts.log`). Each job's `failed()` also marks its own record (`geocode_failed_at`, `webhook_failed_at`), so you can see the failure on the order itself. The alerts channel stands in for a real alerting service: in production it would ship to Logstash, Datadog or similar, where the alert rules live. Each alert carries the job's class and its UUID, which is the ID `queue:failed` and `queue:retry` use, and never customer addresses.
 
 **Sail with MySQL.** Development and tests run on the same database as production would, so nothing relies on database behaviour that can't be checked locally.
 
