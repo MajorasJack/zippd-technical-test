@@ -4,6 +4,7 @@ namespace App\Actions;
 
 use App\Enums\OrderStatus;
 use App\Exceptions\InvalidStatusTransition;
+use App\Jobs\SendStatusWebhook;
 use App\Models\Order;
 use Illuminate\Support\Facades\DB;
 
@@ -44,7 +45,7 @@ class ChangeOrderStatus
             return false;
         }
 
-        $order->statusChanges()->create(['from_status' => $order->status, 'to_status' => $status]);
+        SendStatusWebhook::dispatch($order->statusChanges()->create(['from_status' => $order->status, 'to_status' => $status]))->afterCommit();
         $order->forceFill(['status' => $status])->syncOriginal();
 
         return true;

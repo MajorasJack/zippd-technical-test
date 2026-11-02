@@ -2,12 +2,18 @@
 
 use App\Actions\ChangeOrderStatus;
 use App\Enums\OrderStatus;
+use App\Jobs\SendStatusWebhook;
 use App\Models\Order;
 use App\Models\OrderStatusChange;
 use App\Models\Partner;
+use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
 
-it('moves the order to a later status and records the change', function (): void {
+beforeEach(function (): void {
+    Queue::fake();
+});
+
+it('moves the order to a later status, records the change and queues its webhook', function (): void {
     $partner = Sanctum::actingAs(Partner::factory()->create());
     $order = Order::factory()->for($partner)->create();
 
@@ -18,6 +24,7 @@ it('moves the order to a later status and records the change', function (): void
     expect($order->fresh()->status)->toBe(OrderStatus::OutForDelivery)
         ->and($statusChange->from_status)->toBe(OrderStatus::Received)
         ->and($statusChange->to_status)->toBe(OrderStatus::OutForDelivery);
+    Queue::assertPushed(SendStatusWebhook::class, fn (SendStatusWebhook $job): bool => $job->statusChange->is($statusChange));
 });
 
 it('allows skipping a status, from received straight to delivered', function (): void {
@@ -30,7 +37,7 @@ it('allows skipping a status, from received straight to delivered', function ():
     expect($order->fresh()->status)->toBe(OrderStatus::Delivered);
 });
 
-it('returns 422 and leaves the order unchanged when moving from delivered back to received', function (): void {
+it('returns 422, leaves the order unchanged and queues nothing when moving from delivered back to received', function (): void {
     $partner = Sanctum::actingAs(Partner::factory()->create());
     $order = Order::factory()->for($partner)->create(['status' => OrderStatus::Delivered]);
 
@@ -39,9 +46,10 @@ it('returns 422 and leaves the order unchanged when moving from delivered back t
     $response->assertUnprocessable()->assertJsonPath('message', 'An order cannot move from delivered to received.');
     expect($order->fresh()->status)->toBe(OrderStatus::Delivered)
         ->and(OrderStatusChange::count())->toBe(0);
+    Queue::assertNothingPushed();
 });
 
-it('returns 200 and writes no status change when asked for the status the order already has', function (): void {
+it('returns 200, writes no status change and queues nothing when asked for the status the order already has', function (): void {
     $partner = Sanctum::actingAs(Partner::factory()->create());
     $order = Order::factory()->for($partner)->create(['status' => OrderStatus::OutForDelivery]);
 
@@ -49,6 +57,7 @@ it('returns 200 and writes no status change when asked for the status the order 
 
     $response->assertOk()->assertJsonPath('data.status', OrderStatus::OutForDelivery->value);
     expect(OrderStatusChange::count())->toBe(0);
+    Queue::assertNothingPushed();
 });
 
 it('returns 422 for an unknown status', function (): void {
@@ -70,7 +79,7 @@ it('returns 404 and leaves the order unchanged for another partner\'s order', fu
     expect($order->fresh()->status)->toBe(OrderStatus::Received);
 });
 
-it('writes no second status change when it loses the race to another request', function (): void {
+it('writes no second status change and queues no second webhook when it loses the race to another request', function (): void {
     $staleOrder = Order::factory()->create();
     Order::whereKey($staleOrder->id)->update(['status' => OrderStatus::OutForDelivery]);
     OrderStatusChange::factory()->for($staleOrder)->create(['from_status' => OrderStatus::Received, 'to_status' => OrderStatus::OutForDelivery]);
@@ -80,4 +89,5 @@ it('writes no second status change when it loses the race to another request', f
 
     expect($order->status)->toBe(OrderStatus::OutForDelivery)
         ->and(OrderStatusChange::where('to_status', OrderStatus::OutForDelivery)->count())->toBe(1);
+    Queue::assertNotPushed(SendStatusWebhook::class);
 });

@@ -33,6 +33,11 @@ return [
         'max_delay_ms' => (int) env('GEOCODER_MAX_DELAY_MS', 2000),
     ],
 
+    'partner' => [
+        'webhook_url' => env('PARTNER_WEBHOOK_URL'),
+        'webhook_secret' => env('PARTNER_WEBHOOK_SECRET'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),
