@@ -8,7 +8,6 @@ use App\Exceptions\IdempotencyConflict;
 use App\Jobs\GeocodeAddress;
 use App\Models\Order;
 use App\Models\Partner;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
@@ -74,25 +73,22 @@ class CreateOrder
     /**
      * Find the partner's order that matches the reference or the key.
      *
+     * These are two exact lookups because each one reads a single row through its own unique index,
+     * whereas an OR across the two indexes makes MySQL scan every order the partner has.
+     *
      * @throws IdempotencyConflict when the reference and the key match two different orders.
      */
     private function findExisting(Partner $partner, string $reference, ?string $idempotencyKey): ?Order
     {
-        $matchingOrders = $partner->orders()
-            ->where(
-                fn (Builder $query): Builder => $query
-                    ->where('partner_reference', $reference)
-                    ->when(
-                        $idempotencyKey !== null,
-                        fn (Builder $query): Builder => $query->orWhere('idempotency_key', $idempotencyKey),
-                    ),
-            )
-            ->get();
+        $orderWithReference = $partner->orders()->firstWhere('partner_reference', $reference);
+        $orderWithKey = $idempotencyKey !== null
+            ? $partner->orders()->firstWhere('idempotency_key', $idempotencyKey)
+            : null;
 
-        if ($matchingOrders->count() > 1) {
+        if ($orderWithReference !== null && $orderWithKey !== null && $orderWithReference->isNot($orderWithKey)) {
             throw new IdempotencyConflict();
         }
 
-        return $matchingOrders->first();
+        return $orderWithReference ?? $orderWithKey;
     }
 }
