@@ -48,7 +48,9 @@ class Order extends Model
     }
 
     /**
-     * Every status this order has entered, which doubles as the webhook record.
+     * Every status this order has entered.
+     *
+     * Each row also records whether the webhook for that change was delivered.
      *
      * @return HasMany<OrderStatusChange, $this>
      */

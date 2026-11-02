@@ -15,9 +15,6 @@ class SendStatusWebhook implements ShouldQueue
 {
     use Queueable;
 
-    /**
-     * Create a new job instance.
-     */
     public function __construct(
         public OrderStatusChange $statusChange,
     ) {
@@ -26,11 +23,10 @@ class SendStatusWebhook implements ShouldQueue
     /**
      * Send the status change to the partner's webhook URL, signed with the shared secret.
      *
-     * A change that is already marked as delivered is never sent again, so a retry after a success
-     * does no harm. The body is encoded once and those exact bytes are signed and sent, so the
-     * partner can check the signature against what it receives. An error status or a connection
-     * failure throws, so the queue retries it with the backoff above. A missing URL or secret
-     * throws too, so the job fails and the alerts channel shows it.
+     * A change already marked as delivered is skipped, so a retry after a success does no harm. The body
+     * is encoded once and those exact bytes are signed and sent, so the partner can check the signature
+     * against what it receives. An error status, a connection failure or a missing URL or secret throws,
+     * so the queue retries with the backoff above and the alerts channel reports it once retries run out.
      */
     public function handle(): void
     {

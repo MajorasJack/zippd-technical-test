@@ -10,8 +10,8 @@ class StubGeocoder
     /**
      * Look up the coordinates of an address.
      *
-     * This stands in for an external service, so it is slow and unreliable on purpose:
-     * it waits up to `services.geocoder.max_delay_ms` and fails at `services.geocoder.failure_rate`.
+     * It stands in for a slow, unreliable external service, so it waits up to `services.geocoder.max_delay_ms`
+     * and fails at the rate set in `services.geocoder.failure_rate`.
      *
      * @param array<string, ?string> $address
      * @return array{latitude: float, longitude: float}

@@ -11,8 +11,7 @@ enum OrderStatus: string
     /**
      * Whether an order in this status may move to the given one.
      *
-     * Only forward moves are allowed, and skipping a status is fine because a
-     * missed scan can take a parcel straight from received to delivered.
+     * Skipping a status is allowed because a missed scan can take a parcel straight from received to delivered.
      */
     public function canTransitionTo(self $next): bool
     {

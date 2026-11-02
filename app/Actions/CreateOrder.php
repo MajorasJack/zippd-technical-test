@@ -17,9 +17,9 @@ class CreateOrder
      * Create the partner's order, or return the existing one if this is a duplicate.
      *
      * The partner reference identifies the order and the Idempotency-Key identifies the request, so either
-     * one matching makes this a duplicate. The unique indexes are the real guarantee: if two identical
-     * requests race past the lookup, the loser's insert fails and it returns the winner's order instead.
-     * The caller tells a new order from an existing one with wasRecentlyCreated.
+     * one matching makes this a duplicate. If two identical requests both pass the lookup, the unique indexes
+     * reject the second insert and that request returns the first one's order instead. The caller tells
+     * a new order from an existing one with wasRecentlyCreated.
      *
      * @param array{
      *     partner_reference: string,

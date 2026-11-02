@@ -16,9 +16,6 @@ class GeocodeAddress implements ShouldQueue
 {
     use Queueable;
 
-    /**
-     * Create a new job instance.
-     */
     public function __construct(
         public Order $order,
         public AddressType $addressType,
