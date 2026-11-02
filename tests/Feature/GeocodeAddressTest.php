@@ -11,17 +11,25 @@ it('saves the coordinates of its own address and leaves the other address untouc
     $order = Order::factory()->create();
     $latitude = fake()->latitude();
     $longitude = fake()->longitude();
-    $this->mock(StubGeocoder::class, fn (MockInterface $geocoder) => $geocoder->expects('geocode')
-        ->with($order->collection_address)
-        ->andReturn(['latitude' => $latitude, 'longitude' => $longitude]));
+    $this->mock(
+        StubGeocoder::class,
+        fn (MockInterface $geocoder) => $geocoder->expects('geocode')
+            ->with($order->collection_address)
+            ->andReturn(['latitude' => $latitude, 'longitude' => $longitude]),
+    );
 
     (new GeocodeAddress($order, AddressType::Collection))->handle(app(StubGeocoder::class));
 
     $order->refresh();
-    expect((float) $order->collection_latitude)->toBe($latitude)
-        ->and((float) $order->collection_longitude)->toBe($longitude)
-        ->and($order->delivery_latitude)->toBeNull()
-        ->and($order->delivery_longitude)->toBeNull();
+
+    expect((float) $order->collection_latitude)
+        ->toBe($latitude)
+        ->and((float) $order->collection_longitude)
+        ->toBe($longitude)
+        ->and($order->delivery_latitude)
+        ->toBeNull()
+        ->and($order->delivery_longitude)
+        ->toBeNull();
 });
 
 it('does not geocode an address that already has coordinates', function (): void {
@@ -29,15 +37,21 @@ it('does not geocode an address that already has coordinates', function (): void
         'delivery_latitude' => fake()->latitude(),
         'delivery_longitude' => fake()->longitude(),
     ]);
-    $this->mock(StubGeocoder::class, fn (MockInterface $geocoder) => $geocoder->expects('geocode')->never());
+    $this->mock(
+        StubGeocoder::class,
+        fn (MockInterface $geocoder) => $geocoder->expects('geocode')->never(),
+    );
 
     (new GeocodeAddress($order, AddressType::Delivery))->handle(app(StubGeocoder::class));
 });
 
 it('throws when the geocoder fails so the queue retries it', function (): void {
     $order = Order::factory()->create();
-    $this->mock(StubGeocoder::class, fn (MockInterface $geocoder) => $geocoder->expects('geocode')
-        ->andThrow(new GeocodingFailed(fake()->sentence())));
+    $this->mock(
+        StubGeocoder::class,
+        fn (MockInterface $geocoder) => $geocoder->expects('geocode')
+            ->andThrow(new GeocodingFailed(fake()->sentence())),
+    );
 
     expect(fn () => (new GeocodeAddress($order, AddressType::Delivery))->handle(app(StubGeocoder::class)))
         ->toThrow(GeocodingFailed::class);

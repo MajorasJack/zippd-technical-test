@@ -22,7 +22,8 @@ class GeocodeAddress implements ShouldQueue
     public function __construct(
         public Order $order,
         public AddressType $addressType,
-    ) {}
+    ) {
+    }
 
     /**
      * Geocode one of the order's addresses and save its coordinates.

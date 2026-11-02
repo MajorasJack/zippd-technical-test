@@ -16,8 +16,16 @@ class OrderStatusController extends Controller
      * The route's policy check has already confirmed the order belongs to this partner. The order comes
      * from route binding, so the resource answers 200 whether the status changed or was already set.
      */
-    public function update(UpdateOrderStatusRequest $request, Order $order, ChangeOrderStatus $changeOrderStatus): OrderResource
-    {
-        return new OrderResource($changeOrderStatus->handle(order: $order, status: $request->enum('status', OrderStatus::class)));
+    public function update(
+        UpdateOrderStatusRequest $request,
+        Order $order,
+        ChangeOrderStatus $changeOrderStatus,
+    ): OrderResource {
+        return new OrderResource(
+            $changeOrderStatus->handle(
+                order: $order,
+                status: $request->enum('status', OrderStatus::class),
+            ),
+        );
     }
 }

@@ -27,7 +27,7 @@ class ChangeOrderStatus
             return $order;
         }
 
-        if (! $order->status->canTransitionTo($status)) {
+        if (!$order->status->canTransitionTo($status)) {
             throw new InvalidStatusTransition(from: $order->status, to: $status);
         }
 
@@ -45,7 +45,14 @@ class ChangeOrderStatus
             return false;
         }
 
-        SendStatusWebhook::dispatch($order->statusChanges()->create(['from_status' => $order->status, 'to_status' => $status]))->afterCommit();
+        SendStatusWebhook::dispatch(
+            $order->statusChanges()->create([
+                'from_status' => $order->status,
+                'to_status' => $status,
+            ]),
+        )
+            ->afterCommit();
+
         $order->forceFill(['status' => $status])->syncOriginal();
 
         return true;

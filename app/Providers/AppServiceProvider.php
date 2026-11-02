@@ -26,10 +26,13 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Queue::failing(function (JobFailed $event): void {
-            Log::channel('alerts')->critical(sprintf('Job %s failed for good', $event->job->resolveName()), [
-                'job_uuid' => $event->job->uuid(),
-                'exception' => $event->exception->getMessage(),
-            ]);
+            Log::channel('alerts')->critical(
+                sprintf('Job %s failed for good', $event->job->resolveName()),
+                [
+                    'job_uuid' => $event->job->uuid(),
+                    'exception' => $event->exception->getMessage(),
+                ],
+            );
         });
     }
 }

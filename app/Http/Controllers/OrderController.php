@@ -16,8 +16,12 @@ class OrderController extends Controller
      * A resource answers 201 for a model that was just created and 200 otherwise, so a duplicate
      * request gets the existing order back with a 200 without any status handling here.
      */
-    public function store(StoreOrderRequest $request, CreateOrder $createOrder, #[CurrentUser] Partner $partner): OrderResource
-    {
+    public function store(
+        StoreOrderRequest $request,
+        CreateOrder $createOrder,
+        #[CurrentUser]
+        Partner $partner,
+    ): OrderResource {
         return new OrderResource($createOrder->handle(partner: $partner, attributes: $request->validated()));
     }
 }

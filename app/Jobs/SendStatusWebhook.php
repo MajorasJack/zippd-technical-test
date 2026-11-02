@@ -20,7 +20,8 @@ class SendStatusWebhook implements ShouldQueue
      */
     public function __construct(
         public OrderStatusChange $statusChange,
-    ) {}
+    ) {
+    }
 
     /**
      * Send the status change to the partner's webhook URL, signed with the shared secret.
@@ -37,19 +38,26 @@ class SendStatusWebhook implements ShouldQueue
             return;
         }
 
-        $body = json_encode([
-            'event_id' => $this->statusChange->id,
-            'order_id' => $this->statusChange->order_id,
-            'partner_reference' => $this->statusChange->order->partner_reference,
-            'from_status' => $this->statusChange->from_status?->value,
-            'to_status' => $this->statusChange->to_status->value,
-            'changed_at' => $this->statusChange->created_at->toIso8601String(),
-        ], JSON_THROW_ON_ERROR);
+        $body = json_encode(
+            [
+                'event_id' => $this->statusChange->id,
+                'order_id' => $this->statusChange->order_id,
+                'partner_reference' => $this->statusChange->order->partner_reference,
+                'from_status' => $this->statusChange->from_status?->value,
+                'to_status' => $this->statusChange->to_status->value,
+                'changed_at' => $this->statusChange->created_at->toIso8601String(),
+            ],
+            JSON_THROW_ON_ERROR,
+        );
 
         Http::timeout(5)
             ->withHeaders([
                 'X-Event-Id' => (string) $this->statusChange->id,
-                'X-Signature' => hash_hmac('sha256', $body, config()->string('services.partner.webhook_secret')),
+                'X-Signature' => hash_hmac(
+                    'sha256',
+                    $body,
+                    config()->string('services.partner.webhook_secret'),
+                ),
             ])
             ->withBody($body)
             ->post(config()->string('services.partner.webhook_url'))

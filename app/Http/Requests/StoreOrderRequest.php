@@ -31,7 +31,9 @@ class StoreOrderRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         $this->merge([
-            'idempotency_key' => filled($this->header('Idempotency-Key')) ? $this->header('Idempotency-Key') : null,
+            'idempotency_key' => filled($this->header('Idempotency-Key'))
+                ? $this->header('Idempotency-Key')
+                : null,
         ]);
     }
 

@@ -22,7 +22,13 @@ class CreateOrder
      * requests race past the lookup, the loser's insert fails and it returns the winner's order instead.
      * The caller tells a new order from an existing one with wasRecentlyCreated.
      *
-     * @param  array{partner_reference: string, idempotency_key?: ?string, collection_address: array<string, ?string>, delivery_address: array<string, ?string>, parcels: array<int, array{weight_grams: int}>}  $attributes
+     * @param array{
+     *     partner_reference: string,
+     *     idempotency_key?: ?string,
+     *     collection_address: array<string, ?string>,
+     *     delivery_address: array<string, ?string>,
+     *     parcels: array<int, array{weight_grams: int}>,
+     * } $attributes
      *
      * @throws IdempotencyConflict
      */
@@ -57,7 +63,11 @@ class CreateOrder
                 return $order;
             });
         } catch (UniqueConstraintViolationException $exception) {
-            return $this->findExisting(partner: $partner, reference: $reference, idempotencyKey: $idempotencyKey) ?? throw $exception;
+            return $this->findExisting(
+                partner: $partner,
+                reference: $reference,
+                idempotencyKey: $idempotencyKey,
+            ) ?? throw $exception;
         }
     }
 
@@ -69,13 +79,18 @@ class CreateOrder
     private function findExisting(Partner $partner, string $reference, ?string $idempotencyKey): ?Order
     {
         $matchingOrders = $partner->orders()
-            ->where(fn (Builder $query): Builder => $query
-                ->where('partner_reference', $reference)
-                ->when($idempotencyKey !== null, fn (Builder $query): Builder => $query->orWhere('idempotency_key', $idempotencyKey)))
+            ->where(
+                fn (Builder $query): Builder => $query
+                    ->where('partner_reference', $reference)
+                    ->when(
+                        $idempotencyKey !== null,
+                        fn (Builder $query): Builder => $query->orWhere('idempotency_key', $idempotencyKey),
+                    ),
+            )
             ->get();
 
         if ($matchingOrders->count() > 1) {
-            throw new IdempotencyConflict;
+            throw new IdempotencyConflict();
         }
 
         return $matchingOrders->first();

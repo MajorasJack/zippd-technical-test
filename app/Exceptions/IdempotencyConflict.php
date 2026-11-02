@@ -15,8 +15,9 @@ class IdempotencyConflict extends RuntimeException
      */
     public function render(): JsonResponse
     {
-        return response()->json([
-            'message' => 'The partner reference and the Idempotency-Key match different orders.',
-        ], Response::HTTP_CONFLICT);
+        return response()->json(
+            ['message' => 'The partner reference and the Idempotency-Key match different orders.'],
+            Response::HTTP_CONFLICT,
+        );
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\GeocodingFailed;
+use Random\RandomException;
 
 class StubGeocoder
 {
@@ -12,10 +13,10 @@ class StubGeocoder
      * This stands in for an external service, so it is slow and unreliable on purpose:
      * it waits up to `services.geocoder.max_delay_ms` and fails at `services.geocoder.failure_rate`.
      *
-     * @param  array<string, ?string>  $address
+     * @param array<string, ?string> $address
      * @return array{latitude: float, longitude: float}
      *
-     * @throws GeocodingFailed
+     * @throws GeocodingFailed|RandomException
      */
     public function geocode(array $address): array
     {

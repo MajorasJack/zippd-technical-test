@@ -41,54 +41,64 @@ beforeEach(function (): void {
 it('returns 401 for a request with no token', function (): void {
     auth()->logout();
 
-    $response = $this->postJson('/api/orders', validOrderPayload());
-
-    $response->assertUnauthorized();
+    $this->postJson(route('orders.store'), validOrderPayload())->assertUnauthorized();
 });
 
 it('creates the order for the partner with its parcels and a received status change', function (): void {
     $partner = Sanctum::actingAs(Partner::factory()->create());
     $payload = validOrderPayload();
 
-    $response = $this->postJson('/api/orders', $payload);
+    $this->postJson(route('orders.store'), $payload)->assertCreated();
 
-    $response->assertCreated();
     $order = Order::sole();
-    expect($order->partner->is($partner))->toBeTrue()
-        ->and($order->partner_reference)->toBe($payload['partner_reference'])
-        ->and($order->status)->toBe(OrderStatus::Received)
-        ->and($order->parcels->pluck('weight_grams')->all())->toBe(array_column($payload['parcels'], 'weight_grams'))
-        ->and($order->statusChanges->sole()->to_status)->toBe(OrderStatus::Received);
+
+    expect($order->partner->is($partner))
+        ->toBeTrue()
+        ->and($order->partner_reference)
+        ->toBe($payload['partner_reference'])
+        ->and($order->status)
+        ->toBe(OrderStatus::Received)
+        ->and($order->parcels->pluck('weight_grams')->all())
+        ->toBe(array_column($payload['parcels'], 'weight_grams'))
+        ->and($order->statusChanges->sole()->to_status)
+        ->toBe(OrderStatus::Received);
 });
 
 it('returns 422 for an invalid body and saves nothing', function (): void {
     Sanctum::actingAs(Partner::factory()->create());
 
-    $response = $this->postJson('/api/orders', [...validOrderPayload(), 'parcels' => []]);
+    $this->postJson(route('orders.store'), [...validOrderPayload(), 'parcels' => []])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('parcels');
 
-    $response->assertUnprocessable()->assertJsonValidationErrors('parcels');
     expect(Order::count())->toBe(0);
 });
 
 it('returns the existing order with a 200 when the same partner reference is sent twice', function (): void {
     Sanctum::actingAs(Partner::factory()->create());
     $payload = validOrderPayload();
-    $firstResponse = $this->postJson('/api/orders', $payload);
+    $firstResponse = $this->postJson(route('orders.store'), $payload);
 
-    $secondResponse = $this->postJson('/api/orders', $payload);
+    $this->postJson(route('orders.store'), $payload)
+        ->assertOk()
+        ->assertJsonPath('data.id', $firstResponse->json('data.id'));
 
-    $secondResponse->assertOk()->assertJsonPath('data.id', $firstResponse->json('data.id'));
     expect(Order::count())->toBe(1);
 });
 
-it('returns the existing order with a 200 when the same Idempotency-Key comes with a different reference', function (): void {
+it('returns the existing order with a 200 when the same Idempotency-Key comes with a new reference', function (): void {
     Sanctum::actingAs(Partner::factory()->create());
     $idempotencyKey = fake()->uuid();
-    $firstResponse = $this->postJson('/api/orders', validOrderPayload(), ['Idempotency-Key' => $idempotencyKey]);
+    $firstResponse = $this->postJson(
+        route('orders.store'),
+        validOrderPayload(),
+        ['Idempotency-Key' => $idempotencyKey],
+    );
 
-    $secondResponse = $this->postJson('/api/orders', validOrderPayload(), ['Idempotency-Key' => $idempotencyKey]);
+    $this->postJson(route('orders.store'), validOrderPayload(), ['Idempotency-Key' => $idempotencyKey])
+        ->assertOk()
+        ->assertJsonPath('data.id', $firstResponse->json('data.id'));
 
-    $secondResponse->assertOk()->assertJsonPath('data.id', $firstResponse->json('data.id'));
     expect(Order::count())->toBe(1);
 });
 
@@ -98,7 +108,7 @@ it('produces one order when two requests race past the lookup, and both get it b
     $hasRaced = false;
     $competingOrder = null;
     DB::listen(function (QueryExecuted $query) use (&$hasRaced, &$competingOrder, $partner, $payload): void {
-        if ($hasRaced || ! str_starts_with($query->sql, 'select') || ! str_contains($query->sql, '`orders`')) {
+        if ($hasRaced || !str_starts_with($query->sql, 'select') || !str_contains($query->sql, '`orders`')) {
             return;
         }
 
@@ -106,61 +116,70 @@ it('produces one order when two requests race past the lookup, and both get it b
         $competingOrder = app(CreateOrder::class)->handle(partner: $partner, attributes: $payload);
     });
 
-    $response = $this->postJson('/api/orders', $payload);
+    $this->postJson(route('orders.store'), $payload)
+        ->assertOk()
+        ->assertJsonPath('data.id', $competingOrder->id);
 
-    $response->assertOk()->assertJsonPath('data.id', $competingOrder->id);
     expect(Order::count())->toBe(1);
 });
 
 it('creates two orders when two partners send the same partner reference', function (): void {
     $payload = validOrderPayload();
     Sanctum::actingAs(Partner::factory()->create());
-    $this->postJson('/api/orders', $payload);
+    $this->postJson(route('orders.store'), $payload);
     Sanctum::actingAs(Partner::factory()->create());
 
-    $response = $this->postJson('/api/orders', $payload);
+    $this->postJson(route('orders.store'), $payload)->assertCreated();
 
-    $response->assertCreated();
     expect(Order::count())->toBe(2);
 });
 
-it('returns 409 and saves nothing when the reference and the Idempotency-Key match different orders', function (): void {
+it('returns 409 and saves nothing when the reference and Idempotency-Key match different orders', function (): void {
     $partner = Sanctum::actingAs(Partner::factory()->create());
     $orderWithReference = Order::factory()->for($partner)->create();
     $orderWithKey = Order::factory()->for($partner)->create(['idempotency_key' => fake()->uuid()]);
 
-    $response = $this->postJson(
-        '/api/orders',
+    $this->postJson(
+        route('orders.store'),
         [...validOrderPayload(), 'partner_reference' => $orderWithReference->partner_reference],
         ['Idempotency-Key' => $orderWithKey->idempotency_key],
-    );
+    )->assertConflict();
 
-    $response->assertConflict();
-    expect(Order::count())->toBe(2)
-        ->and(Parcel::count())->toBe(0)
-        ->and(OrderStatusChange::count())->toBe(0);
+    expect(Order::count())
+        ->toBe(2)
+        ->and(Parcel::count())
+        ->toBe(0)
+        ->and(OrderStatusChange::count())
+        ->toBe(0);
 });
 
 it('saves nothing and queues nothing when saving a parcel fails', function (): void {
     Sanctum::actingAs(Partner::factory()->create());
     Parcel::creating(fn (): never => throw new RuntimeException(fake()->sentence()));
 
-    $response = $this->postJson('/api/orders', validOrderPayload());
+    $this->postJson(route('orders.store'), validOrderPayload())->assertServerError();
 
-    $response->assertServerError();
-    expect(Order::count())->toBe(0)
-        ->and(Parcel::count())->toBe(0)
-        ->and(OrderStatusChange::count())->toBe(0);
+    expect(Order::count())
+        ->toBe(0)
+        ->and(Parcel::count())
+        ->toBe(0)
+        ->and(OrderStatusChange::count())
+        ->toBe(0);
+
     Queue::assertNothingPushed();
 });
 
 it('queues a GeocodeAddress job for the collection address and one for the delivery address', function (): void {
     Sanctum::actingAs(Partner::factory()->create());
 
-    $this->postJson('/api/orders', validOrderPayload());
+    $this->postJson(route('orders.store'), validOrderPayload());
 
     Queue::assertPushed(GeocodeAddress::class, 2);
+
     foreach (AddressType::cases() as $addressType) {
-        Queue::assertPushed(GeocodeAddress::class, fn (GeocodeAddress $job): bool => $job->addressType === $addressType);
+        Queue::assertPushed(
+            GeocodeAddress::class,
+            fn (GeocodeAddress $job): bool => $job->addressType === $addressType,
+        );
     }
 });

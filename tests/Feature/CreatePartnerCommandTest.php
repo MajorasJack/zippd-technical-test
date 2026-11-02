@@ -11,5 +11,6 @@ it('creates a partner and prints a token that authenticates as that partner', fu
 
     $partner = Partner::sole();
     expect($partner->name)->toBe($name)
-        ->and(PersonalAccessToken::findToken(trim(Artisan::output()))->tokenable->is($partner))->toBeTrue();
+        ->and(PersonalAccessToken::findToken(trim(Artisan::output()))->tokenable->is($partner))
+        ->toBeTrue();
 });
