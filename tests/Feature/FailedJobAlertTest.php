@@ -6,6 +6,7 @@ use App\Jobs\GeocodeAddress;
 use App\Models\Order;
 use App\Services\StubGeocoder;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Mockery\MockInterface;
 
 it('writes a critical alert when a job fails for good', function (): void {
@@ -16,7 +17,7 @@ it('writes a critical alert when a job fails for good', function (): void {
     Log::shouldReceive('channel')->once()->with('alerts')->andReturnSelf();
     Log::shouldReceive('critical')->once()->with(
         sprintf('Job %s failed for good', GeocodeAddress::class),
-        Mockery::on(fn (array $context): bool => array_key_exists('job_id', $context) && $context['exception'] === $message),
+        Mockery::on(fn (array $context): bool => Str::isUuid($context['job_uuid']) && $context['exception'] === $message),
     );
 
     expect(fn () => dispatch_sync(new GeocodeAddress($order, AddressType::Collection)))->toThrow(GeocodingFailed::class);
