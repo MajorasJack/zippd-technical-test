@@ -65,6 +65,13 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'alerts' => [
+            'driver' => 'single',
+            'path' => storage_path('logs/alerts.log'),
+            'level' => 'critical',
+            'replace_placeholders' => true,
+        ],
+
         'daily' => [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),
