@@ -162,7 +162,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 ## Testing
 
-`./vendor/bin/sail test` runs 42 tests against MySQL, with 97% line coverage. Alongside input validation and its limits, the exact response shape partners receive, and the stub geocoder itself, they cover the brief's four required areas:
+`./vendor/bin/sail test` runs 44 tests against MySQL, with 97% line coverage. Alongside input validation and its limits, the exact response shape partners receive, and the stub geocoder itself, they cover the brief's four required areas:
 
 - **Idempotency:** a repeated reference, a repeated key, two requests racing past the lookup, the same reference from two partners, and the `409`.
 - **Rollback:** a parcel that fails to save leaves no order, parcel, status change or queued job.
