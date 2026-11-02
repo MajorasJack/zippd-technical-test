@@ -11,24 +11,22 @@ Built with Laravel 13, MySQL 8.4 and Pest, running in Laravel Sail.
 
 ## How to run it
 
-You need Docker running. PHP 8.3+ and Composer on your machine make the first step easier, but they're optional.
+You need Docker running, plus PHP 8.3+ and Composer on your machine for the first step.
 
 ```bash
-git clone <this repository> order-ingest && cd order-ingest
-cp .env.example .env
-composer install
-./vendor/bin/sail up -d --wait
-./vendor/bin/sail artisan key:generate
-./vendor/bin/sail artisan migrate
+git clone git@github.com:MajorasJack/zippd-technical-test.git && cd zippd-technical-test
+composer setup
 ```
 
-Without PHP on your machine, install the dependencies with Sail's Composer image instead of `composer install`:
+`composer setup` copies `.env.example` to `.env` if there isn't one, installs the dependencies, and starts the containers with `sail up -d --wait`, which returns once MySQL is ready. It then generates the app key and runs the migrations. The first run builds the Docker image, so it takes a few minutes. Run it once: running it again generates a new app key.
+
+Docker provides the runtime, meaning PHP, MySQL and the queue worker. The one-off steps stay in a setup script rather than in the containers' start-up, because running migrations every time a container boots is a pattern to avoid in production.
+
+Without PHP on your machine, install the dependencies with Sail's Composer image first, then run the remaining steps from `composer.json`'s `setup` script by hand:
 
 ```bash
 docker run --rm -u "$(id -u):$(id -g)" -v "$(pwd):/var/www/html" -w /var/www/html laravelsail/php84-composer:latest composer install --ignore-platform-reqs
 ```
-
-`--wait` returns once MySQL's health check passes. On the first start MySQL takes a few seconds to initialise, and `migrate` fails if it runs before then.
 
 The app is on `http://localhost:8080`, and MySQL is forwarded to port `3307`. Change `APP_PORT` and `FORWARD_DB_PORT` in `.env` if those ports are taken.
 
@@ -133,7 +131,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 **One geocoding job per address.** The two lookups run on separate workers at the same time, and a failure only retries the address that failed. A job skips an address that already has coordinates, so running it twice does no harm. It retries 5 times, waiting 10, 30, 60 and then 120 seconds. That covers a few minutes of outage without holding a worker.
 
-**Forward-only statuses.** An order can move to any later status, so a missed scan can take a parcel from `received` straight to `delivered`. It can't go backwards. Asking for the status it already has returns `200` and does nothing, so a partner retrying a PATCH doesn't get an error.
+**Forward-only statuses.** An order can move to any later status, and it can't go backwards. Skipping is allowed because status updates come from scans, and scans get missed. If a parcel goes on the van without its `out-for-delivery` scan, a strict one-step rule would refuse the `delivered` update, and the order would be stuck at `received` even though the parcel arrived. Losing a real delivery is worse than accepting a skipped step. The only invalid move the brief gives is going backwards, from `delivered` to `received`. Asking for the status it already has returns `200` and does nothing, so a partner retrying a PATCH doesn't get an error.
 
 **Compare-and-set instead of row locks.** The status change is `UPDATE orders SET status = ? WHERE id = ? AND status = <the status this request read>`. When two requests arrive together, the database lets only one of them change the row. The other sees zero rows changed and starts again from the order's new state. Statuses only move forward through three values, so this always ends. A unique index on `(order_id, to_status)` backs it up: an order can enter each status once, so the database refuses a duplicate status row even if the application logic were wrong.
 
@@ -164,7 +162,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 ## Testing
 
-`./vendor/bin/sail test` runs 38 tests against MySQL. Alongside the input validation and its limits, they cover the brief's four required areas:
+`./vendor/bin/sail test` runs 42 tests against MySQL, with 97% line coverage. Alongside input validation and its limits, the exact response shape partners receive, and the stub geocoder itself, they cover the brief's four required areas:
 
 - **Idempotency:** a repeated reference, a repeated key, two requests racing past the lookup, the same reference from two partners, and the `409`.
 - **Rollback:** a parcel that fails to save leaves no order, parcel, status change or queued job.
