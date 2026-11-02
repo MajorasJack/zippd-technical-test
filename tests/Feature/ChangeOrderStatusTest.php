@@ -6,6 +6,7 @@ use App\Jobs\SendStatusWebhook;
 use App\Models\Order;
 use App\Models\OrderStatusChange;
 use App\Models\Partner;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
 
@@ -135,3 +136,11 @@ it('writes no second status change and queues no second webhook when another req
 
     Queue::assertNotPushed(SendStatusWebhook::class);
 });
+
+it('throws a model-not-found error when the order is deleted before the retry', function (): void {
+    $staleOrder = Order::factory()->create();
+
+    Order::whereKey($staleOrder->id)->delete();
+
+    app(ChangeOrderStatus::class)->handle(order: $staleOrder, status: OrderStatus::Delivered);
+})->throws(ModelNotFoundException::class);

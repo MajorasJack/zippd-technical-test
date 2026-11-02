@@ -6,6 +6,7 @@ use App\Enums\OrderStatus;
 use App\Exceptions\InvalidStatusTransition;
 use App\Jobs\SendStatusWebhook;
 use App\Models\Order;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 
 class ChangeOrderStatus
@@ -14,11 +15,13 @@ class ChangeOrderStatus
      * Move the order to the given status, or return it unchanged if it already has that status.
      *
      * The update only applies while the status is still the one this request read, so when two requests
-     * arrive together only one changes the row and the other starts again from a fresh copy. The retry is
-     * bounded because each one only happens after another request has moved the order forward, and there
-     * are only three statuses in forward-only order, so a request retries at most twice.
+     * arrive together only one changes the row and the other re-reads the order and starts again. The re-read
+     * goes to the primary database, so a lagging replica can't hand back the old status and make the retry
+     * loop. That keeps the retry bounded: each one only happens after another request has moved the order
+     * forward, and there are only three statuses in forward-only order, so a request retries at most twice.
      *
      * @throws InvalidStatusTransition
+     * @throws ModelNotFoundException when the order is deleted before the retry re-reads it.
      */
     public function handle(Order $order, OrderStatus $status): Order
     {
@@ -32,7 +35,7 @@ class ChangeOrderStatus
 
         return DB::transaction(fn (): bool => $this->moveIfUnchanged(order: $order, status: $status))
             ? $order
-            : $this->handle(order: $order->fresh(), status: $status);
+            : $this->handle(order: $order->refresh(), status: $status);
     }
 
     /**
