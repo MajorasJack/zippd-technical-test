@@ -64,3 +64,33 @@ it('sets geocode_failed_at on the order when it fails after all retries', functi
 
     expect($order->fresh()->geocode_failed_at)->not->toBeNull();
 });
+
+it('clears geocode_failed_at when its address succeeds and the other already has coordinates', function (): void {
+    $order = Order::factory()->create([
+        'delivery_latitude' => fake()->latitude(),
+        'delivery_longitude' => fake()->longitude(),
+        'geocode_failed_at' => now(),
+    ]);
+    $this->mock(
+        StubGeocoder::class,
+        fn (MockInterface $geocoder) => $geocoder->expects('geocode')
+            ->andReturn(['latitude' => fake()->latitude(), 'longitude' => fake()->longitude()]),
+    );
+
+    (new GeocodeAddress($order, AddressType::Collection))->handle(app(StubGeocoder::class));
+
+    expect($order->fresh()->geocode_failed_at)->toBeNull();
+});
+
+it('keeps geocode_failed_at when its address succeeds but the other address has no coordinates', function (): void {
+    $order = Order::factory()->create(['geocode_failed_at' => now()]);
+    $this->mock(
+        StubGeocoder::class,
+        fn (MockInterface $geocoder) => $geocoder->expects('geocode')
+            ->andReturn(['latitude' => fake()->latitude(), 'longitude' => fake()->longitude()]),
+    );
+
+    (new GeocodeAddress($order, AddressType::Collection))->handle(app(StubGeocoder::class));
+
+    expect($order->fresh()->geocode_failed_at)->not->toBeNull();
+});

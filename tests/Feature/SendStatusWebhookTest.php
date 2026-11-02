@@ -89,3 +89,17 @@ it('sends nothing and leaves the change undelivered when the webhook secret is n
 
     Http::assertNothingSent();
 });
+
+it('clears webhook_failed_at and marks the change as delivered when a later send succeeds', function (): void {
+    $statusChange = OrderStatusChange::factory()->create(['webhook_failed_at' => now()]);
+    Http::fake();
+
+    (new SendStatusWebhook($statusChange))->handle();
+
+    $statusChange->refresh();
+
+    expect($statusChange->webhook_failed_at)
+        ->toBeNull()
+        ->and($statusChange->webhook_delivered_at)
+        ->not->toBeNull();
+});

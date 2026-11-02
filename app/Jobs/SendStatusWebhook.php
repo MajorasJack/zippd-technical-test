@@ -59,7 +59,10 @@ class SendStatusWebhook implements ShouldQueue
             ->post(config()->string('services.partner.webhook_url'))
             ->throw();
 
-        $this->statusChange->update(['webhook_delivered_at' => now()]);
+        $this->statusChange->update([
+            'webhook_delivered_at' => now(),
+            'webhook_failed_at' => null,
+        ]);
     }
 
     /**

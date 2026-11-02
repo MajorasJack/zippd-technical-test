@@ -27,6 +27,7 @@ class GeocodeAddress implements ShouldQueue
      *
      * An address with a latitude is already geocoded, so a job that runs twice does no harm.
      * A geocoder failure is left to throw, so the queue retries it with the backoff above.
+     * The failure flag is shared by both addresses, so it is only cleared once both have coordinates.
      */
     public function handle(StubGeocoder $geocoder): void
     {
@@ -38,10 +39,16 @@ class GeocodeAddress implements ShouldQueue
 
         $coordinates = $geocoder->geocode($this->order->{sprintf('%s_address', $type)});
 
-        $this->order->update([
+        $this->order->fill([
             sprintf('%s_latitude', $type) => $coordinates['latitude'],
             sprintf('%s_longitude', $type) => $coordinates['longitude'],
         ]);
+
+        if ($this->order->collection_latitude !== null && $this->order->delivery_latitude !== null) {
+            $this->order->geocode_failed_at = null;
+        }
+
+        $this->order->save();
     }
 
     /**
