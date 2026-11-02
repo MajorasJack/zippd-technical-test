@@ -76,3 +76,16 @@ it('sets webhook_failed_at on the status change when it fails after all retries'
 
     expect($statusChange->fresh()->webhook_failed_at)->not->toBeNull();
 });
+
+it('sends nothing and leaves the change undelivered when the webhook secret is not configured', function (): void {
+    config(['services.partner.webhook_secret' => null]);
+    $statusChange = OrderStatusChange::factory()->create();
+    Http::fake();
+
+    expect(fn () => (new SendStatusWebhook($statusChange))->handle())
+        ->toThrow(InvalidArgumentException::class)
+        ->and($statusChange->fresh()->webhook_delivered_at)
+        ->toBeNull();
+
+    Http::assertNothingSent();
+});

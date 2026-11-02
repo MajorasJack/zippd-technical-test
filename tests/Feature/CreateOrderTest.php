@@ -209,3 +209,26 @@ it('queues a GeocodeAddress job for the collection address and one for the deliv
         );
     }
 });
+
+it('returns the created order in the exact shape partners rely on', function (): void {
+    Sanctum::actingAs(Partner::factory()->create());
+    $payload = validOrderPayload();
+
+    $response = $this->postJson(route('orders.store'), $payload);
+
+    $order = Order::sole();
+
+    $response
+        ->assertCreated()
+        ->assertExactJson([
+            'data' => [
+                'id' => $order->id,
+                'partner_reference' => $payload['partner_reference'],
+                'status' => OrderStatus::Received->value,
+                'collection_address' => $payload['collection_address'],
+                'delivery_address' => $payload['delivery_address'],
+                'parcels' => $payload['parcels'],
+                'created_at' => $order->created_at->toJSON(),
+            ],
+        ]);
+});
