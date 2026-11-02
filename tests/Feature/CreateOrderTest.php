@@ -168,6 +168,46 @@ it('creates two orders when two partners send the same partner reference', funct
     expect(Order::count())->toBe(2);
 });
 
+it('creates two orders when one partner sends references that differ only by case', function (): void {
+    Sanctum::actingAs(Partner::factory()->create());
+    $partnerReference = fake()->bothify('REF-####-????');
+
+    $firstResponse = $this->postJson(
+        route('orders.store'),
+        [...validOrderPayload(), 'partner_reference' => strtoupper($partnerReference)],
+    );
+    $secondResponse = $this->postJson(
+        route('orders.store'),
+        [...validOrderPayload(), 'partner_reference' => strtolower($partnerReference)],
+    );
+
+    $firstResponse->assertCreated();
+    $secondResponse->assertCreated();
+
+    expect(Order::count())->toBe(2);
+});
+
+it('creates two orders when one partner sends Idempotency-Keys that differ only by case', function (): void {
+    Sanctum::actingAs(Partner::factory()->create());
+    $idempotencyKey = fake()->uuid();
+
+    $firstResponse = $this->postJson(
+        route('orders.store'),
+        validOrderPayload(),
+        ['Idempotency-Key' => strtoupper($idempotencyKey)],
+    );
+    $secondResponse = $this->postJson(
+        route('orders.store'),
+        validOrderPayload(),
+        ['Idempotency-Key' => strtolower($idempotencyKey)],
+    );
+
+    $firstResponse->assertCreated();
+    $secondResponse->assertCreated();
+
+    expect(Order::count())->toBe(2);
+});
+
 it('returns 409 and saves nothing when the reference and Idempotency-Key match different orders', function (): void {
     $partner = Sanctum::actingAs(Partner::factory()->create());
     $orderWithReference = Order::factory()->for($partner)->create();
