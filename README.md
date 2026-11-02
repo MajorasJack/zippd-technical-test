@@ -135,7 +135,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 **Compare-and-set instead of row locks.** The status change is `UPDATE orders SET status = ? WHERE id = ? AND status = <the status this request read>`. When two requests arrive together, the database lets only one of them change the row. The other sees zero rows changed and starts again from the order's new state. Statuses only move forward through three values, so this always ends. A unique index on `(order_id, to_status)` backs it up: an order can enter each status once, so the database refuses a duplicate status row even if the application logic were wrong.
 
-**Jobs are queued after the commit, with Redis in mind.** Every dispatch uses `afterCommit()`, so a change that rolls back never queues a job, and a worker can never pick up a job before its row exists. That's the correct choice on Redis, which is the queue I'd use in production. On the `database` driver used here, dispatching *inside* the transaction would also make the job atomic with the status change, a free outbox, and close the small gap where a crash right after the commit loses that one webhook. Checking the queue driver at runtime doesn't belong in the domain code. So if the queue had to stay on MySQL in production, I'd drop `afterCommit()` there instead.
+**Jobs are queued after the commit, with Redis in mind.** Every dispatch uses `afterCommit()`, so a change that rolls back never queues a job, and a worker can never pick up a job before its row exists. That's the correct choice on Redis, which is the queue I'd use in production. It leaves one gap, though. The change commits first and the job is queued afterwards, so if queuing fails (a crash, or a lock wait or dropped connection on a busy database), the change is saved but the partner gets a `500`. Their retry then gets the idempotent `200`, and that webhook or geocode is never queued. Nothing alerts on it. The fix is a transactional outbox, which is the first item under "With more time". Until then, the monitoring section includes a check that finds these rows.
 
 **The status-change row is the webhook record.** Each `order_status_changes` row has `webhook_delivered_at` and `webhook_failed_at`, so there's no separate outbox table. The webhook job checks `webhook_delivered_at` before sending, so a change that has been delivered is never sent again.
 
@@ -153,6 +153,8 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 - **Weights** are whole grams. Integers add up exactly, so there are no floating-point surprises.
 - **50,000 g per parcel is a placeholder** for the partner's real courier limits. It lives in one validation rule, so it's easy to change per partner later.
 - **Parcels have no identity of their own.** The brief asks for parcels with weights, so they're part of the order. Tracking parcels separately would need a parcel ID or a partner's own parcel reference.
+- **Partner references and idempotency keys are case-sensitive.** They're opaque identifiers, so they're compared byte for byte (`utf8mb4_bin`). `ACME-1001` and `acme-1001` are two different orders, not one order sent twice.
+- **`geocode_failed_at` clears once both addresses have coordinates,** for example after `queue:retry`. If both jobs succeed at exactly the same moment after an earlier failure, each can miss the other's result and leave the flag set, even though both addresses are geocoded. It's a stale warning, not lost data.
 - **Up to 50 parcels per order**, and address lines up to 255 characters, so one request can't hold a long transaction open on the database.
 - **`geocode_failed_at` covers both addresses.** The address still without a latitude is the one that failed.
 - **One webhook URL and secret** are shared by every partner, as the brief asks for a URL set in config.
@@ -162,7 +164,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 ## Testing
 
-`./vendor/bin/sail test` runs 44 tests against MySQL, with 97% line coverage. Alongside input validation and its limits, the exact response shape partners receive, and the stub geocoder itself, they cover the brief's four required areas:
+`./vendor/bin/sail test` runs 49 tests against MySQL, with 97% line coverage. Alongside input validation and its limits, the exact response shape partners receive, and the stub geocoder itself, they cover the brief's four required areas:
 
 - **Idempotency:** a repeated reference, a repeated key, two requests racing past the lookup, the same reference from two partners, and the `409`.
 - **Rollback:** a parcel that fails to save leaves no order, parcel, status change or queued job.
@@ -179,6 +181,7 @@ Nothing planned is missing. The items below are deliberate omissions, and "With 
 
 These are roughly in the order they'd matter under load, at around 100k orders a day.
 
+- **A transactional outbox,** so a change and its follow-up job are saved together or not at all. Laravel's `config/queue.php` already has an `after_commit` setting per connection, so it needs no domain code. I'd remove `->afterCommit()` from the dispatches and set `after_commit` to `false` on the `database` connection, so the job row commits in the same transaction as the change. I'd set it to `true` on `redis`, so a worker can't run a job before its data exists. Checking the queue driver at runtime doesn't belong in the domain code, and this keeps it in config.
 - **Move the queue off MySQL, to Redis.** The `database` driver polls, inserts and deletes about four jobs per order on the same primary that takes the API's writes. It's the first thing to strain as volume grows.
 - **Separate queues** for geocoding and webhooks. While a partner's endpoint is down, each webhook attempt can hold a worker for up to 5 seconds, five times over, which starves geocoding on a shared queue.
 - **Throttle Sanctum's `last_used_at` writes.** Sanctum updates the token's row on every request, which is a hot single-row write per partner.
@@ -189,9 +192,14 @@ These are roughly in the order they'd matter under load, at around 100k orders a
 - **Honour `Retry-After`** from the geocoding service and from partners, instead of always using the fixed backoff. Releasing a job for that long counts as an attempt, so the tries would need adjusting.
 - **Stop retrying a `4xx`** that can never succeed, such as a `400` or `410`, and fail the job straight away.
 - **A time limit on signatures** (a signed timestamp), so a captured webhook can't be replayed later.
-- **A sweeper** that finds status changes whose webhook was never queued or delivered, for example after a worker crash, and queues them again. It would need an index covering `webhook_delivered_at`, `webhook_failed_at` and `created_at`.
+- **A sweeper** that finds status changes whose webhook was never queued or delivered, and orders whose geocoding never ran, for example after a worker crash, and queues them again. It would need an index covering `webhook_delivered_at`, `webhook_failed_at` and `created_at`.
 - **Deduplicate alerts,** so an hour-long partner outage raises one alert rather than thousands. Check too that a real geocoder's exceptions don't carry the address, for example in a request URL.
 - **A cache in front of the idempotency lookup** at high volume, keeping keys for about 24 hours, with the unique indexes staying as the real guarantee.
+- **Make `/up` check the database.** Laravel's health route only fires a `DiagnosingHealth` event, and nothing listens to it, so `/up` reports healthy even with MySQL down, and a load balancer keeps sending traffic to a broken node. A listener running `select 1` fixes that, and a separate readiness check could also look at the age of the oldest queued job.
+- **Rotate the logs.** `laravel.log` and `alerts.log` use the `single` driver. Every failed job attempt logs a stack trace, so a partner outage could fill the disk. I'd use the `daily` driver with a retention period, or log to stderr in containers.
+- **Size the workers.** One worker handles one job at a time. At about a second per geocode, roughly 200k geocodes a day is more than one worker can keep up with. The worker restarts if it crashes, but it needs scaling out, ideally with separate queues.
+- **Fail at boot when the webhook URL or secret is missing in production,** rather than letting every webhook job fail and retry.
+- **Insert parcels in one query** rather than one INSERT per parcel, if large orders turn out to be common.
 - **Rate limiting** per partner.
 - **Leave `PARTNER_WEBHOOK_SECRET` blank in `.env.example`,** so a production install can't inherit the development value.
 
@@ -199,6 +207,7 @@ These are roughly in the order they'd matter under load, at around 100k orders a
 
 - **The alerts channel**, shipped to Logstash or similar, with an alert on every critical entry. These are jobs that failed after all their retries.
 - **`failed_jobs` growth**, and the number of orders with `geocode_failed_at` set.
+- **Work that was never queued:** status changes with neither `webhook_delivered_at` nor `webhook_failed_at` after a few minutes, and orders with a missing latitude and no `geocode_failed_at` after a few minutes. Until there's an outbox, these are how a lost job shows up.
 - **Undelivered webhooks:** status changes with `webhook_failed_at` set, or with neither timestamp set after a few minutes, which would point to stuck workers or a missing job.
 - **Queue depth and wait time**, so slow workers are spotted before partners notice.
 - **Slow queries and rows examined** on the `orders` lookups, so a query that stops using its index shows up before it hurts the primary.
