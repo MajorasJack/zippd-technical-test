@@ -44,6 +44,14 @@ it('returns 401 for a request with no token', function (): void {
     $this->postJson(route('orders.store'), validOrderPayload())->assertUnauthorized();
 });
 
+it('returns a JSON 401 for a request with no token and no Accept header', function (): void {
+    auth()->logout();
+
+    $this->post(route('orders.store'), validOrderPayload())
+        ->assertUnauthorized()
+        ->assertExactJson(['message' => 'Unauthenticated.']);
+});
+
 it('creates the order for the partner with its parcels and a received status change', function (): void {
     $partner = Sanctum::actingAs(Partner::factory()->create());
     $payload = validOrderPayload();
