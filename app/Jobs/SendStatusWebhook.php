@@ -25,8 +25,9 @@ class SendStatusWebhook implements ShouldQueue
      *
      * A change already marked as delivered is skipped, so a retry after a success does no harm. The body
      * is encoded once and those exact bytes are signed and sent, so the partner can check the signature
-     * against what it receives. An error status, a connection failure or a missing URL or secret throws,
-     * so the queue retries with the backoff above and the alerts channel reports it once retries run out.
+     * against what it receives. Redirects are not followed, because Guzzle would turn the POST into a body-less
+     * GET and report success. Any non-2xx status, a connection failure or a missing URL or secret throws, so
+     * the queue retries with the backoff above and the alerts channel reports it once retries run out.
      */
     public function handle(): void
     {
@@ -47,6 +48,7 @@ class SendStatusWebhook implements ShouldQueue
         );
 
         Http::timeout(5)
+            ->withoutRedirecting()
             ->withHeaders([
                 'X-Event-Id' => (string) $this->statusChange->id,
                 'X-Signature' => hash_hmac(
@@ -57,7 +59,7 @@ class SendStatusWebhook implements ShouldQueue
             ])
             ->withBody($body)
             ->post(config()->string('services.partner.webhook_url'))
-            ->throw();
+            ->throwUnlessStatus(fn (int $status): bool => $status >= 200 && $status < 300);
 
         $this->statusChange->update([
             'webhook_delivered_at' => now(),

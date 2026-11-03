@@ -103,3 +103,14 @@ it('clears webhook_failed_at and marks the change as delivered when a later send
         ->and($statusChange->webhook_delivered_at)
         ->not->toBeNull();
 });
+
+it('treats a redirect as a failure and leaves the change undelivered', function (): void {
+    $statusChange = OrderStatusChange::factory()->create();
+
+    Http::fake(fn (): PromiseInterface => Http::response(status: 301, headers: ['Location' => fake()->url()]));
+
+    expect(fn () => (new SendStatusWebhook($statusChange))->handle())
+        ->toThrow(RequestException::class)
+        ->and($statusChange->fresh()->webhook_delivered_at)
+        ->toBeNull();
+});
