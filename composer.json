@@ -37,12 +37,12 @@
     },
     "scripts": {
         "setup": [
-            "composer install",
+            "Composer\\Config::disableProcessTimeout",
             "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
-            "@php artisan key:generate",
-            "@php artisan migrate --force",
-            "npm install --ignore-scripts",
-            "npm run build"
+            "@composer install",
+            "./vendor/bin/sail up -d --wait",
+            "./vendor/bin/sail artisan key:generate",
+            "./vendor/bin/sail artisan migrate --force"
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",
