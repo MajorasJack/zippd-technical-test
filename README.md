@@ -28,7 +28,7 @@ Without PHP on your machine, install the dependencies with Sail's Composer image
 docker run --rm -u "$(id -u):$(id -g)" -v "$(pwd):/var/www/html" -w /var/www/html laravelsail/php84-composer:latest composer install --ignore-platform-reqs
 ```
 
-The app is on `http://localhost:8080`, and MySQL is forwarded to port `3307`. Change `APP_PORT` and `FORWARD_DB_PORT` in `.env` if those ports are taken.
+The app is on `http://localhost:8080`, and MySQL is forwarded to port `3307`. If `composer setup` stops with "port is already allocated", something else (another copy of this project, for example) is using one of those ports. Change `APP_PORT` or `FORWARD_DB_PORT` in the `.env` that setup created, then run `composer setup` again.
 
 **Set the webhook target.** In `.env`, set `PARTNER_WEBHOOK_URL` to somewhere that can receive a POST, such as a https://webhook.site URL. `PARTNER_WEBHOOK_SECRET` already has a development value. Until the URL is set, every webhook fails, and you'll see it in the alerts log.
 
@@ -141,7 +141,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 **At-least-once delivery.** Exactly-once delivery over a network isn't possible. If the partner processes a webhook but the response is lost (a timeout is the usual cause), the job can't tell that apart from a webhook that never arrived. The choice is between never resending, which risks losing updates, and resending, which risks duplicates. I chose to resend, and give partners `X-Event-Id` to drop duplicates. An update known to be delivered is never sent again. The job retries 5 times, waiting 10 seconds, 30 seconds, 1 minute and then 5 minutes, with a 5-second timeout per attempt.
 
-**Signed webhooks.** `X-Signature` lets a partner check a webhook came from this service. The body is encoded once and those exact bytes are both signed and sent, so the signature always matches what arrives.
+**Signed webhooks.** `X-Signature` lets a partner check a webhook came from this service. The body is encoded once and those exact bytes are both signed and sent, so the signature always matches what arrives. Redirects aren't followed: a `3xx` from the partner counts as a failed delivery and is retried. Following it would turn the `POST` into a `GET` with no body, and the update would be marked as delivered when nothing arrived.
 
 **One place for alerts.** A single `Queue::failing()` listener writes every job that fails permanently to the `alerts` log channel (`storage/logs/alerts.log`). Each job's `failed()` also marks its own record (`geocode_failed_at`, `webhook_failed_at`), so you can see the failure on the order itself. The alerts channel stands in for a real alerting service: in production it would ship to Logstash, Datadog or similar, where the alert rules live. Each alert carries the job's class and its UUID, which is the ID `queue:failed` and `queue:retry` use, and never customer addresses.
 
@@ -153,7 +153,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 - **Weights** are whole grams. Integers add up exactly, so there are no floating-point surprises.
 - **50,000 g per parcel is a placeholder** for the partner's real courier limits. It lives in one validation rule, so it's easy to change per partner later.
 - **Parcels have no identity of their own.** The brief asks for parcels with weights, so they're part of the order. Tracking parcels separately would need a parcel ID or a partner's own parcel reference.
-- **Partner references and idempotency keys are case-sensitive.** They're opaque identifiers, so they're compared byte for byte (`utf8mb4_bin`). `ACME-1001` and `acme-1001` are two different orders, not one order sent twice.
+- **Partner references and idempotency keys are case-sensitive.** They're opaque identifiers, so they use the binary collation `utf8mb4_bin`, where case and accents matter. `ACME-1001` and `acme-1001` are two different orders, not one order sent twice. One caveat is that `utf8mb4_bin` still ignores trailing spaces, so `abc` and `abc ` count as the same key. `utf8mb4_0900_bin` would treat them as different too.
 - **`geocode_failed_at` clears once both addresses have coordinates,** for example after `queue:retry`. If both jobs succeed at exactly the same moment after an earlier failure, each can miss the other's result and leave the flag set, even though both addresses are geocoded. It's a stale warning, not lost data.
 - **Up to 50 parcels per order**, and address lines up to 255 characters, so one request can't hold a long transaction open on the database.
 - **`geocode_failed_at` covers both addresses.** The address still without a latitude is the one that failed.
@@ -164,7 +164,7 @@ hash_equals(hash_hmac('sha256', $rawBody, $sharedSecret), $request->header('X-Si
 
 ## Testing
 
-`./vendor/bin/sail test` runs 49 tests against MySQL, with 97% line coverage. Alongside input validation and its limits, the exact response shape partners receive, and the stub geocoder itself, they cover the brief's four required areas:
+`./vendor/bin/sail test` runs 50 tests against MySQL, with 97% line coverage. Alongside input validation and its limits, the exact response shape partners receive, and the stub geocoder itself, they cover the brief's four required areas:
 
 - **Idempotency:** a repeated reference, a repeated key, two requests racing past the lookup, the same reference from two partners, and the `409`.
 - **Rollback:** a parcel that fails to save leaves no order, parcel, status change or queued job.
@@ -175,7 +175,11 @@ The test suite runs one test at a time, so it can't run two requests at exactly 
 
 ## What's missing
 
-Nothing planned is missing. The items below are deliberate omissions, and "With more time" lists where they would go next.
+Every requirement in the brief is built and tested. These are the known gaps I'd close next, with more detail under "With more time":
+
+- **Work queued after the commit can be lost.** If queuing a job fails right after its change commits, that webhook or geocode is never queued, and the partner's retry gets the idempotent `200`. The fix is the transactional outbox. On the `database` driver this ships with, that means removing `afterCommit()` and letting the queue config decide per driver. The monitoring check below finds these rows in the meantime.
+- **Retries cover minutes, not hours.** Geocoding gives up after about 4 minutes and webhooks after about 7, so a partner outage longer than that sends jobs to `failed_jobs`. They can be recovered with `queue:retry`.
+- **`/up` doesn't check the database,** and the logs don't rotate.
 
 ## With more time
 
@@ -207,7 +211,7 @@ These are roughly in the order they'd matter under load, at around 100k orders a
 
 - **The alerts channel**, shipped to Logstash or similar, with an alert on every critical entry. These are jobs that failed after all their retries.
 - **`failed_jobs` growth**, and the number of orders with `geocode_failed_at` set.
-- **Work that was never queued:** status changes with neither `webhook_delivered_at` nor `webhook_failed_at` after a few minutes, and orders with a missing latitude and no `geocode_failed_at` after a few minutes. Until there's an outbox, these are how a lost job shows up.
+- **Work that was never queued:** status changes with a `from_status` (the initial `received` row never sends a webhook) and neither `webhook_delivered_at` nor `webhook_failed_at` after a few minutes. Also orders with a missing latitude and no `geocode_failed_at` after a few minutes. Until there's an outbox, these are how a lost job shows up. Running these checks regularly on a large table would need an index to match.
 - **Undelivered webhooks:** status changes with `webhook_failed_at` set, or with neither timestamp set after a few minutes, which would point to stuck workers or a missing job.
 - **Queue depth and wait time**, so slow workers are spotted before partners notice.
 - **Slow queries and rows examined** on the `orders` lookups, so a query that stops using its index shows up before it hurts the primary.
